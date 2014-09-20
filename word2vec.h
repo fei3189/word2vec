@@ -1,34 +1,31 @@
-//
 //  word2vec.h
 //  word2vec
 //
-//  Created by 姜飞 on 14-9-12.
-//  Copyright (c) 2014年 thuir. All rights reserved.
+//  Copyright (C) 2014 Fei Jiang <f91.jiang@gmail.com>
+//
 //
 
 #ifndef word2vec_word2vec_h
 #define word2vec_word2vec_h
 
-#include <iostream>
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include <cstdlib>
-#include <ctime>
 
 namespace word2vec {
     struct word_freq {
         std::string word;
         int freq;
+        word_freq(std::string w, int f): word(w), freq(f) { }
     };
     
     class model {
     private:
-        int option_share_inout;
-        int option_dependent;
-        int option_iter_num;
-        int option_ivlbl;
-        int option_nce;
+        int option_share_inout;  // 1 if using the same vector for input and output vector
+        int option_dependent;    // 1 if weight of each window position are parameters ?
+        int option_iter_num;     // iteration numbers
+        int option_ivlbl;        // 1 for ivlbl model, 0 for vlbl model
+        int option_nce;          // number of nce examples
         int window;
         int embed_size;
         
@@ -56,8 +53,10 @@ namespace word2vec {
         int max_doc_len;
         int vocab_size;
         
+        // for counting
         long long total_words;
         long long trained_words;
+        long long trained_words_before;
         
         std::unordered_map<std::string, int> word2id;
         std::vector<std::string> id2word;
@@ -65,11 +64,8 @@ namespace word2vec {
         
         void train_thread(const std::string &filename, int num_threads, int tid);
         int read_words(std::vector<int> &words, std::ifstream &fin, long long end);
-        void train_ivlbl(const std::vector<int> &words);
-        void train_vlbl(const std::vector<int> &words);
-        void train_vlbl1(const std::vector<int> &words);
-        void train_ivlbl1(const std::vector<int> &doc);
-        int read_words1(std::vector<int> &words, std::ifstream &fin, long long end);
+        void train_ivlbl(const std::vector<int> &words, float *buffer);
+        void train_vlbl(const std::vector<int> &words, float *buffer);
         void init_sample_table();
         void init(int dep, int iter, int ivlbl, int nce, int size, int win, float rate);
         

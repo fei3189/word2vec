@@ -2,8 +2,9 @@
 //  main.cpp
 //  word2vec
 //
-//  Created by 姜飞 on 14-9-12.
-//  Copyright (c) 2014年 thuir. All rights reserved.
+//  Copyright (C) 2014 Fei Jiang <f91.jiang@gmail.com>
+//
+//  Part of the code in main.cpp are from https://code.google.com/p/word2vec/
 //
 
 #include <iostream>
@@ -20,23 +21,25 @@ void print_info() {
     printf("\t-output <file>\n");
     printf("\t\tUse <file> to save the resulting word vectors / word clusters\n");
     printf("\t-size <int>\n");
-    printf("\t\tSet size of word vectors; default is 100\n");
+    printf("\t\tSet size of word vectors; default is 200\n");
     printf("\t-window <int>\n");
     printf("\t\tSet max skip length between words; default is 5\n");
     printf("\t-nce <int>\n");
-    printf("\t\tPrior K for noise-contrastive estimation, default is 10\n");
+    printf("\t\tPrior K (number of noise samples) for noise-contrastive estimation, default is 10\n");
     printf("\t-threads <int>\n");
-    printf("\t\tUse <int> threads (default 12)\n");
+    printf("\t\tUse <int> threads (default 2)\n");
     printf("\t-iter <int>\n");
-    printf("\t\tRun more training iterations (default 5)\n");
+    printf("\t\tRun more training iterations (default 1)\n");
     printf("\t-min-count <int>\n");
     printf("\t\tThis will discard words that appear less than <int> times; default is 5\n");
     printf("\t-alpha <float>\n");
-    printf("\t\tSet the starting learning rate; default is 0.05\n");
+    printf("\t\tSet the global learning rate; default is 0.05\n");
     printf("\t-binary <int>\n");
     printf("\t\tSave the resulting vectors in binary moded; default is 0 (off)\n");
     printf("\t-ivlbl <int>\n");
-    printf("\t\tUse the inversed LBL model; default is 1\n");
+    printf("\t\tUse the inversed LBL model; default is 0\n");
+    printf("\t-dependent <int>\n");
+    printf("\t\tWhether to use window position dependent weights; default is 0\n");
     printf("\nExamples:\n");
     printf("./word2vec -train data.txt -output vec.txt -size 200 -window 5 -nce 10 -binary 0 -ivlbl 1 -iter 1\n\n");
 }
@@ -61,8 +64,8 @@ int main(int argc, char **argv) {
     }
     
     int i;
-    int embed_size = 50, binary = 0, ivlbl = 1, window = 5, nce = 10;
-    int num_threads = 1, iter = 1, min_count = 5, dependent = 0;
+    int embed_size = 200, binary = 0, ivlbl = 0, window = 5, nce = 10;
+    int num_threads = 2, iter = 1, min_count = 5, dependent = 0;
     float rate = 0.05;
     std::string train_file, output_file;
     

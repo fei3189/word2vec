@@ -2,15 +2,17 @@
 //  word2vec.cpp
 //  word2vec
 //
-//  Created by 姜飞 on 14-9-12.
-//  Copyright (c) 2014年 thuir. All rights reserved.
+//  Copyright (C) 2014 Fei Jiang <f91.jiang@gmail.com>
 //
 
+#include <iostream>
 #include <fstream>
 #include <unordered_map>
 #include <thread>
 #include <iomanip>
 #include <algorithm>
+#include <cstdlib>
+#include <ctime>
 #include "word2vec.h"
 
 namespace word2vec {
@@ -52,6 +54,7 @@ namespace word2vec {
         option_share_inout = 0; // Input vector and output vector share the same vector is set to 1
         total_words = 0;
         trained_words = 0;
+        trained_words_before = 0;
         
         weight = new float[(window * 2 + 1) * embed_size];
         for (int i = 0; i < (window * 2 + 1) * embed_size; ++i) {
@@ -103,7 +106,7 @@ namespace word2vec {
         std::vector<word_freq> wf;
         for (auto iter = word2count.begin(); iter != word2count.end(); ++iter) {
             if (iter->second >= min_count) {
-                wf.push_back(word_freq{iter->first, iter->second});
+                wf.push_back(word_freq(iter->first, iter->second));
             }
         }
         
@@ -143,8 +146,6 @@ namespace word2vec {
         
         std::cout << "Vocabulary size = " << word2id.size() << std::endl;
         
-//        for (int i = 0; i < vocab_size; ++i)
-//            std::cout << pn[i] << std::endl;
         return vocab_size;  // Size of vocabulary
     }
     
@@ -157,47 +158,32 @@ namespace word2vec {
         }
     }
     
+    // Read words from corpus, the cursor should not exceed 'end' for each thread.
+    // Documents are separated by '\n'.
+    // To use less memory, if a document is longer than max_doc_len, it will be truncated.
     int model::read_words(std::vector<int> &words, std::ifstream &fin, long long end) {
         words.clear();
-        while (!fin.eof() && isspace(fin.peek()))
-            fin.get();
         std::string w;
+        char c;
         while (words.size() < max_doc_len) {
-            fin >> w;
+            c = fin.get();
             if (fin.eof())
                 break;
-            auto it = word2id.find(w);
-            if (it != word2id.end())
-                words.push_back(it->second);
-            
-            if (fin.tellg() >= end)
-                return 1;
-            
-            while (!fin.eof()) {
-                int c = fin.peek();
-                if (!isspace(c))
-                    break;
-                else if (c == '\r' || c == '\n')
+            if (c == ' ' || c == '\n' || c == '\t') {
+                if (!w.empty()) {
+                    auto it = word2id.find(w);
+                    if (it != word2id.end())
+                        words.push_back(it->second);
+                    w.clear();
+                    if (words.size() > max_doc_len)
+                        return 0;
+                }
+                if (c == '\n') {
                     return 0;
-                else
-                    fin.get();
+                }
+            } else {
+                w.push_back(c);
             }
-        }
-        if (fin.eof())
-            return 2;
-        return 0;
-    }
-    
-    int model::read_words1(std::vector<int> &words, std::ifstream &fin, long long end) {
-        words.clear();
-        std::string w;
-        while (words.size() < max_doc_len) {
-            fin >> w;
-            if (fin.eof())
-                break;
-            auto it = word2id.find(w);
-            if (it != word2id.end())
-                words.push_back(it->second);
         }
         if (fin.eof())
             return 2;
@@ -206,88 +192,12 @@ namespace word2vec {
         return 0;
     }
     
-    void model::train_ivlbl(const std::vector<int> &doc) {
-        // Memory will not be freed unless problem ends, but allocated only once.
-        float *neu1 = new float[embed_size], *neu2 = new float[embed_size], *neu3 = new float[embed_size], *neu4 = new float[embed_size];
-        for (int i = 0; i < doc.size(); ++i) {
-            for (int j = -window; j <= window; ++j) {
-                if (j == 0 || i + j < 0 || i + j >= doc.size())
-                    continue;
-                for (int k = 0; k < embed_size; ++k) {
-                    neu2[k] = neu3[k] = neu4[k] = 0;
-                    neu1[k] = weight[(j + window) * embed_size + k] * v_out[doc[i + j] * embed_size + k];
-                }
-                for (int n = 0; n < option_nce + 1; ++n) {
-                    // n > 0 corresponds to noise samples, n = 0 corresponds to training samples
-                    int current = n > 0 ? sample_table[rand() % sample_table.size()] : doc[i];
-                    
-                    float s = 0;
-                    for (int k = 0; k < embed_size; ++k) {
-                        s += neu1[k] * v_in[current * embed_size + k];
-                    }
-                    
-                    float coef;
-                    if (s < 0) {
-                        float exp_s = exp(s);
-                        coef = n > 0 ? (- exp_s / (option_nce * pn[current] + exp_s)) : (option_nce * pn[current] / (option_nce * pn[current] + exp_s));
-                    } else {
-                        float exp_s = exp(-s);
-                        coef = n > 0 ? (- 1 / (option_nce * pn[current] * exp_s + 1)) : (option_nce * pn[current] * exp_s / (option_nce * pn[current] * exp_s + 1));
-                    }
-                    
-                    if (option_dependent) {
-                        for (int k = 0; k < embed_size; ++k) {
-                            neu3[k] += v_in[current * embed_size + k] * v_out[doc[i + j] * embed_size + k] * coef;
-                        }
-                    }
-                    for (int k = 0; k < embed_size; ++k) {
-                        neu4[k] += coef * v_in[current * embed_size + k] * weight[(j + window) * embed_size + k];
-                    }
-                    
-                    // Compute sum of square of gradients for AdaGrad
-                    float g1 = 0, sum_grad = 0;
-                    for (int k = 0; k < embed_size; ++k) {
-                        neu2[k] = coef * neu1[k];
-                        g1 += neu2[k] * neu2[k];
-                    }
-                    g_in[current] += g1 / embed_size;
-                    sum_grad = sqrtf(g_in[current]);
-                    for (int k = 0; k < embed_size; ++k) {
-                        v_in[current * embed_size + k] += learning_rate * neu2[k] / sum_grad;
-                    }
-                }
-                if (option_dependent) {
-                    float g2 = 0, sum_grad = 0;
-                    for (int k = 0; k < embed_size; ++k) {
-                        g2 += neu3[k] * neu3[k];
-                    }
-                    g_weight[j + window] += g2 / embed_size;
-                    sum_grad = sqrtf(g_weight[j + window]);
-                    for (int k = 0; k < embed_size; ++k) {
-                        weight[(j + window) * embed_size + k] += learning_rate * neu3[k] / sum_grad;
-                    }
-                }
-                float g3 = 0, sum_grad = 0;
-                for (int k = 0; k < embed_size; ++k)
-                    g3 += neu4[k] * neu4[k];
-                g_out[doc[i + j]] += g3 / embed_size;
-                sum_grad = sqrtf(g_out[doc[i + j]]);
-                for (int k = 0; k < embed_size; ++k) {
-                    v_out[doc[i + j] * embed_size + k] += learning_rate * neu4[k] / sum_grad;
-                }
-            }
-        }
-        delete []neu1;
-        delete []neu2;
-        delete []neu3;
-        delete []neu4;
-    }
-    
-    void model::train_ivlbl1(const std::vector<int> &doc) {
-        // Memory will not be freed unless problem ends, but allocated only once.
-        float *neu1 = new float[embed_size], *neu2 = new float[embed_size],
-              *neu3 = new float[(2 * window + 1) * embed_size],
-              *neu4 = new float[(2 * window + 1) * embed_size];
+    // buffer should be large enough for computing
+    // to avoid time-consuming dynamic allocation in this function, as doc can be very short
+    void model::train_ivlbl(const std::vector<int> &doc, float *buffer) {
+        float *neu1 = buffer,  // size = embed_size
+              *neu3 = buffer + embed_size,  // size = (2 * window + 1) * embed_size
+              *neu4 = neu3 + (2 * window + 1) * embed_size;   // size = (2 * window + 1) * embed_size
         
         for (int i = 0; i < doc.size(); ++i) {
             for (int k = 0; k < (2 * window + 1) * embed_size; ++k)
@@ -295,17 +205,21 @@ namespace word2vec {
             for (int n = 0; n < option_nce + 1; ++n) {
                 // n > 0 corresponds to noise samples, n = 0 corresponds to training samples
                 for (int k = 0; k < embed_size; ++k) {
-                    neu1[k] = neu2[k] = 0;
+                    neu1[k] = 0;
                 }
                 int current = n > 0 ? sample_table[rand() % sample_table.size()] : doc[i];
                 for (int j = -window; j <= window; ++j) {
                     if (j == 0 || i + j < 0 || i + j >= doc.size())
                         continue;
+                    
                     float s = 0;
                     for (int k = 0; k < embed_size; ++k) {
                         s += weight[(j + window) * embed_size + k] * v_out[doc[i + j] * embed_size + k] * v_in[current * embed_size + k];
                     }
+                    
                     float coef;
+                    
+                    // for computation stability, e^x can be extremely large
                     if (s < 0) {
                         float exp_s = exp(s);
                         coef = n > 0 ? (- exp_s / (option_nce * pn[current] + exp_s)) : (option_nce * pn[current] / (option_nce * pn[current] + exp_s));
@@ -313,6 +227,7 @@ namespace word2vec {
                         float exp_s = exp(-s);
                         coef = n > 0 ? (- 1 / (option_nce * pn[current] * exp_s + 1)) : (option_nce * pn[current] * exp_s / (option_nce * pn[current] * exp_s + 1));
                     }
+                    
                     for (int k = 0; k < embed_size; ++k) {
                         neu1[k] += coef * weight[(j + window) * embed_size + k] * v_out[doc[i + j] * embed_size + k];
                         neu3[(j + window) * embed_size + k] += coef * weight[(j + window) * embed_size + k] * v_in[current * embed_size + k];
@@ -333,6 +248,8 @@ namespace word2vec {
                     v_in[current * embed_size + k] += learning_rate * neu1[k] / sum_grad;
                 }
             }
+            
+            // output vectors
             for (int j = -window; j <= window; ++j) {
                 if (j == 0 || i + j < 0 || i + j >= doc.size())
                     continue;
@@ -345,6 +262,8 @@ namespace word2vec {
                 for (int k = 0; k < embed_size; ++k) {
                     v_out[doc[i + j] * embed_size + k] += learning_rate * neu3[(j + window) * embed_size + k] / sum_grad;
                 }
+                
+                // Compute the gradient of weights
                 if (option_dependent) {
                     g1 = 0, sum_grad = 0;
                     for (int k = 0; k < embed_size; ++k) {
@@ -358,23 +277,22 @@ namespace word2vec {
                 }
             }
         }
-
-        delete []neu1;
-        delete []neu2;
-        delete []neu3;
-        delete []neu4;
     }
 
-    void model::train_vlbl(const std::vector<int> &doc) {
-        float *neu1 = new float[embed_size], *neu2 = new float[embed_size], *neu3 = new float[embed_size], *neu4 = new float[(2 * window + 1) * embed_size];
-        auto doc_size = doc.size();
+    // buffer should be large enough for computing
+    // to avoid time-consuming dynamic allocation in this function, as doc can be very short
+    void model::train_vlbl(const std::vector<int> &doc, float *buffer) {
+        float *neu1 = buffer,   // size = embed_size
+              *neu2 = neu1 + embed_size,  // size = embed_size
+              *neu3 = neu2 + embed_size,  // size = embed_size
+              *neu4 = neu3 + embed_size;  // size = (2 * window + 1) * embed_size
+
         for (int i = 0; i < doc.size(); ++i) {
-            
             // Compute sum of input vectors with weight
             for (int k = 0; k < embed_size; ++k)
                 neu1[k] = neu2[k] = neu3[k] = 0;
             for (int j = -window; j <= window; ++j) {
-                if (j == 0 || i + j < 0 || i + j >= doc_size)
+                if (j == 0 || i + j < 0 || i + j >= doc.size())
                     continue;
                 for (int k = 0; k < embed_size; ++k) {
                     neu1[k] += v_in[doc[i + j] * embed_size + k] * weight[(window + j) * embed_size + k];
@@ -392,6 +310,8 @@ namespace word2vec {
                 }
 
                 float coef;
+                
+                // for computation stability, e^x can be extremely large
                 if (s < 0) {
                     float exp_s = exp(s);
                     coef = n > 0 ? (- exp_s / (option_nce * pn[current] + exp_s)) : (option_nce * pn[current] / (option_nce * pn[current] + exp_s));
@@ -426,6 +346,7 @@ namespace word2vec {
                 }
             }
             
+            // input vectors
             for (int j = -window; j <= window; ++j) {
                 if (j == 0 || i + j < 0 || i + j >= doc.size())
                     continue;
@@ -441,6 +362,7 @@ namespace word2vec {
                 }
             }
             
+            // Compute the gradient of weights
             if (option_dependent) {
                 for (int j = -window; j <= window; ++j) {
                     if (j == 0 || i + j < 0 || i + j >= doc.size())
@@ -457,10 +379,6 @@ namespace word2vec {
                 }
             }
         }
-        delete []neu1;
-        delete []neu2;
-        delete []neu3;
-        delete []neu4;
     }
     
     void model::train_thread(const std::string &filename, int num_threads, int tid) {
@@ -471,24 +389,32 @@ namespace word2vec {
         if (end > file_size)
             end = file_size;
         fin.seekg(beg, std::ios::beg);
-        printf("%lld\n", end);
+        
         std::vector<int> doc;
+        float *buffer = new float[embed_size * (2 * window + 1) * 5];
+        
         int no_more_words = 0;
+        clock_t tbeg = clock(), tend;
         while (!no_more_words) {
             doc.clear();
-            clock_t s = clock();
-            no_more_words = read_words1(doc, fin, end);
+            no_more_words = read_words(doc, fin, end);
             if (option_ivlbl) {
-                train_ivlbl1(doc);
+                train_ivlbl(doc, buffer);
             } else {
-                train_vlbl(doc);
+                train_vlbl(doc, buffer);
             }
             trained_words += doc.size();
-            if (tid == 0) {
-                printf("\rprogress %.2f%%, speed %.2f k/s", 100.0 * trained_words / total_words, doc.size() / ((clock() - s) * 1000.0  / CLOCKS_PER_SEC));
-                std::cout.flush();
+            if (tid == 0 && trained_words - trained_words_before >= max_doc_len) {
+                tend = clock();
+                
+                printf("\rprogress %.2f%%, speed %.2f k/s", 100.0 * trained_words / total_words, (trained_words - trained_words_before) / ((tend - tbeg) * 1000.0 / num_threads / CLOCKS_PER_SEC));
+                fflush(stdout);
+                trained_words_before = trained_words;
+                tbeg = tend;
             }
         }
+        
+        delete []buffer;
         fin.close();
     }
     
@@ -520,6 +446,7 @@ namespace word2vec {
                 threads[i].join();
             }
             std::cout << std::endl;
+            trained_words = trained_words_before = 0;
         }
         return 0;
     }
