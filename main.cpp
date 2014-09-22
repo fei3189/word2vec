@@ -41,7 +41,7 @@ void print_info() {
     printf("\t-dependent <int>\n");
     printf("\t\tWhether to use window position dependent weights; default is 0\n");
     printf("\nExamples:\n");
-    printf("./word2vec -train data.txt -output vec.txt -size 200 -window 5 -nce 10 -binary 0 -ivlbl 1 -iter 1\n\n");
+    printf("./word2vec -train data.txt -output vec.txt -size 200 -window 5 -nce 10 -binary 0 -ivlbl 0 -iter 1\n\n");
 }
 
 int ArgPos(char *str, int argc, char **argv) {

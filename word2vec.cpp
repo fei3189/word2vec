@@ -162,6 +162,9 @@ namespace word2vec {
     // Documents are separated by '\n'.
     // To use less memory, if a document is longer than max_doc_len, it will be truncated.
     int model::read_words(std::vector<int> &words, std::ifstream &fin, long long end) {
+        if (fin.eof() || fin.tellg() >= end)
+            return 1;
+        
         words.clear();
         std::string w;
         char c;
@@ -185,10 +188,6 @@ namespace word2vec {
                 w.push_back(c);
             }
         }
-        if (fin.eof())
-            return 2;
-        if (fin.tellg() >= end)
-            return 1;
         return 0;
     }
     
@@ -388,6 +387,7 @@ namespace word2vec {
         long long beg = file_size / num_threads * tid, end = file_size / num_threads * (tid + 1);
         if (end > file_size)
             end = file_size;
+        printf("%lld %lld %lld\n", beg, end, file_size);
         fin.seekg(beg, std::ios::beg);
         
         std::vector<int> doc;
@@ -407,7 +407,7 @@ namespace word2vec {
             if (tid == 0 && trained_words - trained_words_before >= max_doc_len) {
                 tend = clock();
                 
-                printf("\rprogress %.2f%%, speed %.2f k/s", 100.0 * trained_words / total_words, (trained_words - trained_words_before) / ((tend - tbeg) * 1000.0 / num_threads / CLOCKS_PER_SEC));
+                printf("\rprogress %lld/%lld %.2f%%, speed %.2f k/s", trained_words, total_words, 100.0 * trained_words / total_words, (trained_words - trained_words_before) / ((tend - tbeg) * 1000.0 / num_threads / CLOCKS_PER_SEC));
                 fflush(stdout);
                 trained_words_before = trained_words;
                 tbeg = tend;
